@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 #
 # NOTE! Don't add files that are generated in specific
 # subdirectories here. Add them in the ".gitignore" file
@@ -99,10 +100,6 @@ modules.order
 /include/generated/
 /include/ksym/
 /arch/*/include/generated/
-
-# Generated lkdtm tests
-/tools/testing/selftests/lkdtm/*.sh
-!/tools/testing/selftests/lkdtm/run.sh
 
 # stgit generated dirs
 patches-*
