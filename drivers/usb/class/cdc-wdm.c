@@ -824,7 +824,7 @@ static struct usb_class_driver wdm_class = {
 };
 
 /* --- WWAN framework integration --- */
-#ifdef CONFIG_WWAN
+#ifdef CONFIG_WWAN_CORE
 static int wdm_wwan_port_start(struct wwan_port *port)
 {
 	struct wdm_device *desc = wwan_port_get_drvdata(port);
@@ -963,11 +963,11 @@ static void wdm_wwan_rx(struct wdm_device *desc, int length)
 	/* inbuf has been copied, it is safe to check for outstanding data */
 	schedule_work(&desc->service_outs_intr);
 }
-#else /* CONFIG_WWAN */
+#else /* CONFIG_WWAN_CORE */
 static void wdm_wwan_init(struct wdm_device *desc) {}
 static void wdm_wwan_deinit(struct wdm_device *desc) {}
 static void wdm_wwan_rx(struct wdm_device *desc, int length) {}
-#endif /* CONFIG_WWAN */
+#endif /* CONFIG_WWAN_CORE */
 
 /* --- error handling --- */
 static void wdm_rxwork(struct work_struct *work)
@@ -1035,9 +1035,10 @@ static int wdm_create(struct usb_interface *intf, struct usb_endpoint_descriptor
 	INIT_WORK(&desc->rxwork, wdm_rxwork);
 	INIT_WORK(&desc->service_outs_intr, service_interrupt_work);
 
-	rv = -EINVAL;
-	if (!usb_endpoint_is_int_in(ep))
+	if (!usb_endpoint_is_int_in(ep)) {
+		rv = -EINVAL;
 		goto err;
+	}
 
 	desc->wMaxPacketSize = usb_endpoint_maxp(ep);
 

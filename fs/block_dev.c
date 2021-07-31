@@ -812,6 +812,8 @@ static void bdev_free_inode(struct inode *inode)
 	free_percpu(bdev->bd_stats);
 	kfree(bdev->bd_meta_info);
 
+	if (!bdev_is_partition(bdev))
+		kfree(bdev->bd_disk);
 	kmem_cache_free(bdev_cachep, BDEV_I(inode));
 }
 
@@ -1609,7 +1611,7 @@ static long block_ioctl(struct file *file, unsigned cmd, unsigned long arg)
  * Does not take i_mutex for the write and thus is not for general purpose
  * use.
  */
-ssize_t blkdev_write_iter(struct kiocb *iocb, struct iov_iter *from)
+static ssize_t blkdev_write_iter(struct kiocb *iocb, struct iov_iter *from)
 {
 	struct file *file = iocb->ki_filp;
 	struct inode *bd_inode = bdev_file_inode(file);
@@ -1647,9 +1649,8 @@ ssize_t blkdev_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	blk_finish_plug(&plug);
 	return ret;
 }
-EXPORT_SYMBOL_GPL(blkdev_write_iter);
 
-ssize_t blkdev_read_iter(struct kiocb *iocb, struct iov_iter *to)
+static ssize_t blkdev_read_iter(struct kiocb *iocb, struct iov_iter *to)
 {
 	struct file *file = iocb->ki_filp;
 	struct inode *bd_inode = bdev_file_inode(file);
@@ -1671,21 +1672,6 @@ ssize_t blkdev_read_iter(struct kiocb *iocb, struct iov_iter *to)
 	iov_iter_reexpand(to, iov_iter_count(to) + shorted);
 	return ret;
 }
-EXPORT_SYMBOL_GPL(blkdev_read_iter);
-
-/*
- * Try to release a page associated with block device when the system
- * is under memory pressure.
- */
-static int blkdev_releasepage(struct page *page, gfp_t wait)
-{
-	struct super_block *super = BDEV_I(page->mapping->host)->bdev.bd_super;
-
-	if (super && super->s_op->bdev_try_to_free_page)
-		return super->s_op->bdev_try_to_free_page(super, page, wait);
-
-	return try_to_free_buffers(page);
-}
 
 static int blkdev_writepages(struct address_space *mapping,
 			     struct writeback_control *wbc)
@@ -1701,7 +1687,6 @@ static const struct address_space_operations def_blk_aops = {
 	.write_begin	= blkdev_write_begin,
 	.write_end	= blkdev_write_end,
 	.writepages	= blkdev_writepages,
-	.releasepage	= blkdev_releasepage,
 	.direct_IO	= blkdev_direct_IO,
 	.migratepage	= buffer_migrate_page_norefs,
 	.is_dirty_writeback = buffer_check_dirty_writeback,
