@@ -26,7 +26,7 @@ SYM_CODE_START(hypercall_page)
 	.rept (PAGE_SIZE / 32)
 		UNWIND_HINT_FUNC
 		.skip 31, 0x90
-		ret
+		RET
 	.endr
 
 #define HYPERCALL(n) \
@@ -45,13 +45,13 @@ SYM_CODE_START(startup_xen)
 
 	/* Clear .bss */
 	xor %eax,%eax
-	mov $__bss_start, %_ASM_DI
-	mov $__bss_stop, %_ASM_CX
-	sub %_ASM_DI, %_ASM_CX
-	shr $__ASM_SEL(2, 3), %_ASM_CX
-	rep __ASM_SIZE(stos)
+	mov $__bss_start, %rdi
+	mov $__bss_stop, %rcx
+	sub %rdi, %rcx
+	shr $3, %rcx
+	rep stosq
 
-	mov %_ASM_SI, xen_start_info
+	mov %rsi, xen_start_info
 	mov initial_stack(%rip), %rsp
 
 	/* Set up %gs.

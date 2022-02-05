@@ -135,18 +135,28 @@ EXPORT_SYMBOL(__put_page);
  * put_pages_list() - release a list of pages
  * @pages: list of pages threaded on page->lru
  *
- * Release a list of pages which are strung together on page.lru.  Currently
- * used by read_cache_pages() and related error recovery code.
+ * Release a list of pages which are strung together on page.lru.
  */
 void put_pages_list(struct list_head *pages)
 {
-	while (!list_empty(pages)) {
-		struct page *victim;
+	struct page *page, *next;
 
-		victim = lru_to_page(pages);
-		list_del(&victim->lru);
-		put_page(victim);
+	list_for_each_entry_safe(page, next, pages, lru) {
+		if (!put_page_testzero(page)) {
+			list_del(&page->lru);
+			continue;
+		}
+		if (PageHead(page)) {
+			list_del(&page->lru);
+			__put_compound_page(page);
+			continue;
+		}
+		/* Cannot be PageLRU because it's passed to us using the lru */
+		__ClearPageWaiters(page);
 	}
+
+	free_unref_page_list(pages);
+	INIT_LIST_HEAD(pages);
 }
 EXPORT_SYMBOL(put_pages_list);
 
@@ -872,7 +882,7 @@ void lru_cache_disable(void)
 	 * all online CPUs so any calls of lru_cache_disabled wrapped by
 	 * local_lock or preemption disabled would be ordered by that.
 	 * The atomic operation doesn't need to have stronger ordering
-	 * requirements because that is enforeced by the scheduling
+	 * requirements because that is enforced by the scheduling
 	 * guarantees.
 	 */
 	__lru_add_drain_all(true);
@@ -1067,24 +1077,24 @@ void __pagevec_lru_add(struct pagevec *pvec)
 }
 
 /**
- * pagevec_remove_exceptionals - pagevec exceptionals pruning
- * @pvec:	The pagevec to prune
+ * folio_batch_remove_exceptionals() - Prune non-folios from a batch.
+ * @fbatch: The batch to prune
  *
- * find_get_entries() fills both pages and XArray value entries (aka
- * exceptional entries) into the pagevec.  This function prunes all
- * exceptionals from @pvec without leaving holes, so that it can be
- * passed on to page-only pagevec operations.
+ * find_get_entries() fills a batch with both folios and shadow/swap/DAX
+ * entries.  This function prunes all the non-folio entries from @fbatch
+ * without leaving holes, so that it can be passed on to folio-only batch
+ * operations.
  */
-void pagevec_remove_exceptionals(struct pagevec *pvec)
+void folio_batch_remove_exceptionals(struct folio_batch *fbatch)
 {
-	int i, j;
+	unsigned int i, j;
 
-	for (i = 0, j = 0; i < pagevec_count(pvec); i++) {
-		struct page *page = pvec->pages[i];
-		if (!xa_is_value(page))
-			pvec->pages[j++] = page;
+	for (i = 0, j = 0; i < folio_batch_count(fbatch); i++) {
+		struct folio *folio = fbatch->folios[i];
+		if (!xa_is_value(folio))
+			fbatch->folios[j++] = folio;
 	}
-	pvec->nr = j;
+	fbatch->nr = j;
 }
 
 /**

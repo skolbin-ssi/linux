@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: GPL-2.0
 VERSION = 5
-PATCHLEVEL = 15
+PATCHLEVEL = 17
 SUBLEVEL = 0
-EXTRAVERSION =
-NAME = Trick or Treat
+EXTRAVERSION = -rc2
+NAME = Gobble Gobble
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
@@ -688,17 +688,6 @@ ifdef CONFIG_FUNCTION_TRACER
   CC_FLAGS_FTRACE := -pg
 endif
 
-ifdef CONFIG_CC_IS_GCC
-RETPOLINE_CFLAGS	:= $(call cc-option,-mindirect-branch=thunk-extern -mindirect-branch-register)
-RETPOLINE_VDSO_CFLAGS	:= $(call cc-option,-mindirect-branch=thunk-inline -mindirect-branch-register)
-endif
-ifdef CONFIG_CC_IS_CLANG
-RETPOLINE_CFLAGS	:= -mretpoline-external-thunk
-RETPOLINE_VDSO_CFLAGS	:= -mretpoline
-endif
-export RETPOLINE_CFLAGS
-export RETPOLINE_VDSO_CFLAGS
-
 include $(srctree)/arch/$(SRCARCH)/Makefile
 
 ifdef need-config
@@ -789,7 +778,7 @@ stackp-flags-$(CONFIG_STACKPROTECTOR_STRONG)      := -fstack-protector-strong
 KBUILD_CFLAGS += $(stackp-flags-y)
 
 KBUILD_CFLAGS-$(CONFIG_WERROR) += -Werror
-KBUILD_CFLAGS += $(KBUILD_CFLAGS-y)
+KBUILD_CFLAGS += $(KBUILD_CFLAGS-y) $(CONFIG_CC_IMPLICIT_FALLTHROUGH)
 
 ifdef CONFIG_CC_IS_CLANG
 KBUILD_CPPFLAGS += -Qunused-arguments
@@ -801,10 +790,6 @@ KBUILD_CFLAGS += -Wno-gnu
 KBUILD_CFLAGS += -mno-global-merge
 else
 
-# Warn about unmarked fall-throughs in switch statement.
-# Disabled for clang while comment to attribute conversion happens and
-# https://github.com/ClangBuiltLinux/linux/issues/636 is discussed.
-KBUILD_CFLAGS += $(call cc-option,-Wimplicit-fallthrough=5,)
 # gcc inanely warns about local variables called 'main'
 KBUILD_CFLAGS += -Wno-main
 endif
@@ -849,44 +834,6 @@ KBUILD_CFLAGS	+= $(call cc-option, -fno-stack-clash-protection)
 ifdef CONFIG_ZERO_CALL_USED_REGS
 KBUILD_CFLAGS	+= -fzero-call-used-regs=used-gpr
 endif
-
-DEBUG_CFLAGS	:=
-
-ifdef CONFIG_DEBUG_INFO
-
-ifdef CONFIG_DEBUG_INFO_SPLIT
-DEBUG_CFLAGS	+= -gsplit-dwarf
-else
-DEBUG_CFLAGS	+= -g
-endif
-
-ifndef CONFIG_AS_IS_LLVM
-KBUILD_AFLAGS	+= -Wa,-gdwarf-2
-endif
-
-ifndef CONFIG_DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT
-dwarf-version-$(CONFIG_DEBUG_INFO_DWARF4) := 4
-dwarf-version-$(CONFIG_DEBUG_INFO_DWARF5) := 5
-DEBUG_CFLAGS	+= -gdwarf-$(dwarf-version-y)
-endif
-
-ifdef CONFIG_DEBUG_INFO_REDUCED
-DEBUG_CFLAGS	+= -fno-var-tracking
-ifdef CONFIG_CC_IS_GCC
-DEBUG_CFLAGS	+= -femit-struct-debug-baseonly
-endif
-endif
-
-ifdef CONFIG_DEBUG_INFO_COMPRESSED
-DEBUG_CFLAGS	+= -gz=zlib
-KBUILD_AFLAGS	+= -gz=zlib
-KBUILD_LDFLAGS	+= --compress-debug-sections=zlib
-endif
-
-endif # CONFIG_DEBUG_INFO
-
-KBUILD_CFLAGS += $(DEBUG_CFLAGS)
-export DEBUG_CFLAGS
 
 ifdef CONFIG_FUNCTION_TRACER
 ifdef CONFIG_FTRACE_MCOUNT_USE_CC
@@ -984,7 +931,7 @@ KBUILD_CFLAGS += -falign-functions=64
 endif
 
 # arch Makefile may override CC so keep this after arch Makefile is included
-NOSTDINC_FLAGS += -nostdinc -isystem $(shell $(CC) -print-file-name=include)
+NOSTDINC_FLAGS += -nostdinc
 
 # warn about C99 declaration after statement
 KBUILD_CFLAGS += -Wdeclaration-after-statement
@@ -994,6 +941,11 @@ KBUILD_CFLAGS += -Wvla
 
 # disable pointer signed / unsigned warnings in gcc 4.0
 KBUILD_CFLAGS += -Wno-pointer-sign
+
+# In order to make sure new function cast mismatches are not introduced
+# in the kernel (to avoid tripping CFI checking), the kernel should be
+# globally built with -Wcast-function-type.
+KBUILD_CFLAGS += $(call cc-option, -Wcast-function-type)
 
 # disable stringop warnings in gcc 8+
 KBUILD_CFLAGS += $(call cc-disable-warning, stringop-truncation)
@@ -1009,6 +961,21 @@ KBUILD_CFLAGS += $(call cc-disable-warning, restrict)
 # Enabled with W=2, disabled by default as noisy
 ifdef CONFIG_CC_IS_GCC
 KBUILD_CFLAGS += -Wno-maybe-uninitialized
+endif
+
+ifdef CONFIG_CC_IS_GCC
+# The allocators already balk at large sizes, so silence the compiler
+# warnings for bounds checks involving those possible values. While
+# -Wno-alloc-size-larger-than would normally be used here, earlier versions
+# of gcc (<9.1) weirdly don't handle the option correctly when _other_
+# warnings are produced (?!). Using -Walloc-size-larger-than=SIZE_MAX
+# doesn't work (as it is documented to), silently resolving to "0" prior to
+# version 9.1 (and producing an error more recently). Numeric values larger
+# than PTRDIFF_MAX also don't work prior to version 9.1, which are silently
+# ignored, continuing to default to PTRDIFF_MAX. So, left with no other
+# choice, we must perform a versioned check to disable this warning.
+# https://lore.kernel.org/lkml/20210824115859.187f272f@canb.auug.org.au
+KBUILD_CFLAGS += $(call cc-ifversion, -ge, 0901, -Wno-alloc-size-larger-than)
 endif
 
 # disable invalid "can't wrap" optimizations for signed / pointers
@@ -1036,6 +1003,7 @@ KBUILD_CPPFLAGS += $(call cc-option,-fmacro-prefix-map=$(srctree)/=)
 
 # include additional Makefiles when needed
 include-y			:= scripts/Makefile.extrawarn
+include-$(CONFIG_DEBUG_INFO)	+= scripts/Makefile.debug
 include-$(CONFIG_KASAN)		+= scripts/Makefile.kasan
 include-$(CONFIG_KCSAN)		+= scripts/Makefile.kcsan
 include-$(CONFIG_UBSAN)		+= scripts/Makefile.ubsan
@@ -1310,15 +1278,6 @@ headers: $(version_h) scripts_unifdef uapi-asm-generic archheaders archscripts
 	$(Q)$(MAKE) $(hdr-inst)=include/uapi
 	$(Q)$(MAKE) $(hdr-inst)=arch/$(SRCARCH)/include/uapi
 
-# Deprecated. It is no-op now.
-PHONY += headers_check
-headers_check:
-	@echo >&2 "=================== WARNING ==================="
-	@echo >&2 "Since Linux 5.5, 'make headers_check' is no-op,"
-	@echo >&2 "and will be removed after Linux 5.15 release."
-	@echo >&2 "Please remove headers_check from your scripts."
-	@echo >&2 "==============================================="
-
 ifdef CONFIG_HEADERS_INSTALL
 prepare: headers
 endif
@@ -1529,7 +1488,7 @@ MRPROPER_FILES += include/config include/generated          \
 		  debian snap tar-install \
 		  .config .config.old .version \
 		  Module.symvers \
-		  certs/signing_key.pem certs/signing_key.x509 \
+		  certs/signing_key.pem \
 		  certs/x509.genkey \
 		  vmlinux-gdb.py \
 		  *.spec
@@ -1755,9 +1714,9 @@ PHONY += prepare
 # now expand this into a simple variable to reduce the cost of shell evaluations
 prepare: CC_VERSION_TEXT := $(CC_VERSION_TEXT)
 prepare:
-	@if [ "$(CC_VERSION_TEXT)" != $(CONFIG_CC_VERSION_TEXT) ]; then \
+	@if [ "$(CC_VERSION_TEXT)" != "$(CONFIG_CC_VERSION_TEXT)" ]; then \
 		echo >&2 "warning: the compiler differs from the one used to build the kernel"; \
-		echo >&2 "  The kernel was built by: "$(CONFIG_CC_VERSION_TEXT); \
+		echo >&2 "  The kernel was built by: $(CONFIG_CC_VERSION_TEXT)"; \
 		echo >&2 "  You are using:           $(CC_VERSION_TEXT)"; \
 	fi
 

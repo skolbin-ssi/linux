@@ -4,6 +4,7 @@
 
 #include <asm/cpufeature.h>
 #include <asm/fpu/xstate.h>
+#include <asm/fpu/xcr.h>
 
 #ifdef CONFIG_X86_64
 DECLARE_PER_CPU(u64, xfd_state);
@@ -19,10 +20,19 @@ static inline void xstate_init_xcomp_bv(struct xregs_state *xsave, u64 mask)
 		xsave->header.xcomp_bv = mask | XCOMP_BV_COMPACTED_FORMAT;
 }
 
+static inline u64 xstate_get_group_perm(bool guest)
+{
+	struct fpu *fpu = &current->group_leader->thread.fpu;
+	struct fpu_state_perm *perm;
+
+	/* Pairs with WRITE_ONCE() in xstate_request_perm() */
+	perm = guest ? &fpu->guest_perm : &fpu->perm;
+	return READ_ONCE(perm->__state_perm);
+}
+
 static inline u64 xstate_get_host_group_perm(void)
 {
-	/* Pairs with WRITE_ONCE() in xstate_request_perm() */
-	return READ_ONCE(current->group_leader->thread.fpu.perm.__state_perm);
+	return xstate_get_group_perm(false);
 }
 
 enum xstate_copy_mode {
@@ -107,11 +117,7 @@ static inline u64 xfeatures_mask_independent(void)
 		     "\n"						\
 		     "xor %[err], %[err]\n"				\
 		     "3:\n"						\
-		     ".pushsection .fixup,\"ax\"\n"			\
-		     "4: movl $-2, %[err]\n"				\
-		     "jmp 3b\n"						\
-		     ".popsection\n"					\
-		     _ASM_EXTABLE(661b, 4b)				\
+		     _ASM_EXTABLE_TYPE_REG(661b, 3b, EX_TYPE_EFAULT_REG, %[err]) \
 		     : [err] "=r" (err)					\
 		     : "D" (st), "m" (*st), "a" (lmask), "d" (hmask)	\
 		     : "memory")
@@ -148,8 +154,14 @@ static inline void xfd_update_state(struct fpstate *fpstate)
 		}
 	}
 }
+
+extern int __xfd_enable_feature(u64 which, struct fpu_guest *guest_fpu);
 #else
 static inline void xfd_update_state(struct fpstate *fpstate) { }
+
+static inline int __xfd_enable_feature(u64 which, struct fpu_guest *guest_fpu) {
+	return -EPERM;
+}
 #endif
 
 /*
@@ -199,6 +211,32 @@ static inline void os_xrstor_supervisor(struct fpstate *fpstate)
 }
 
 /*
+ * XSAVE itself always writes all requested xfeatures.  Removing features
+ * from the request bitmap reduces the features which are written.
+ * Generate a mask of features which must be written to a sigframe.  The
+ * unset features can be optimized away and not written.
+ *
+ * This optimization is user-visible.  Only use for states where
+ * uninitialized sigframe contents are tolerable, like dynamic features.
+ *
+ * Users of buffers produced with this optimization must check XSTATE_BV
+ * to determine which features have been optimized out.
+ */
+static inline u64 xfeatures_need_sigframe_write(void)
+{
+	u64 xfeaures_to_write;
+
+	/* In-use features must be written: */
+	xfeaures_to_write = xfeatures_in_use();
+
+	/* Also write all non-optimizable sigframe features: */
+	xfeaures_to_write |= XFEATURE_MASK_USER_SUPPORTED &
+			     ~XFEATURE_MASK_SIGFRAME_INITOPT;
+
+	return xfeaures_to_write;
+}
+
+/*
  * Save xstate to user space xsave area.
  *
  * We don't use modified optimization because xrstor/xrstors might track
@@ -220,10 +258,16 @@ static inline int xsave_to_user_sigframe(struct xregs_state __user *buf)
 	 */
 	struct fpstate *fpstate = current->thread.fpu.fpstate;
 	u64 mask = fpstate->user_xfeatures;
-	u32 lmask = mask;
-	u32 hmask = mask >> 32;
+	u32 lmask;
+	u32 hmask;
 	int err;
 
+	/* Optimize away writing unnecessary xfeatures: */
+	if (fpu_state_size_dynamic())
+		mask &= xfeatures_need_sigframe_write();
+
+	lmask = mask;
+	hmask = mask >> 32;
 	xfd_validate_state(fpstate, mask, false);
 
 	stac();

@@ -139,9 +139,8 @@ int copy_thread(unsigned long clone_flags, unsigned long new_stackp,
 				(unsigned long)__ret_from_fork;
 		frame->childregs.gprs[9] = new_stackp; /* function */
 		frame->childregs.gprs[10] = arg;
-		frame->childregs.gprs[11] = (unsigned long)do_exit;
 		frame->childregs.orig_gpr2 = -1;
-
+		frame->childregs.last_break = 1;
 		return 0;
 	}
 	frame->childregs = *current_pt_regs();

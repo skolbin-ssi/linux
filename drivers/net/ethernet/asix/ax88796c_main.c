@@ -144,12 +144,13 @@ static void ax88796c_set_mac_addr(struct net_device *ndev)
 static void ax88796c_load_mac_addr(struct net_device *ndev)
 {
 	struct ax88796c_device *ax_local = to_ax88796c_device(ndev);
+	u8 addr[ETH_ALEN];
 	u16 temp;
 
 	lockdep_assert_held(&ax_local->spi_lock);
 
 	/* Try the device tree first */
-	if (!eth_platform_get_mac_address(&ax_local->spi->dev, ndev->dev_addr) &&
+	if (!platform_get_ethdev_address(&ax_local->spi->dev, ndev) &&
 	    is_valid_ether_addr(ndev->dev_addr)) {
 		if (netif_msg_probe(ax_local))
 			dev_info(&ax_local->spi->dev,
@@ -159,18 +160,19 @@ static void ax88796c_load_mac_addr(struct net_device *ndev)
 
 	/* Read the MAC address from AX88796C */
 	temp = AX_READ(&ax_local->ax_spi, P3_MACASR0);
-	ndev->dev_addr[5] = (u8)temp;
-	ndev->dev_addr[4] = (u8)(temp >> 8);
+	addr[5] = (u8)temp;
+	addr[4] = (u8)(temp >> 8);
 
 	temp = AX_READ(&ax_local->ax_spi, P3_MACASR1);
-	ndev->dev_addr[3] = (u8)temp;
-	ndev->dev_addr[2] = (u8)(temp >> 8);
+	addr[3] = (u8)temp;
+	addr[2] = (u8)(temp >> 8);
 
 	temp = AX_READ(&ax_local->ax_spi, P3_MACASR2);
-	ndev->dev_addr[1] = (u8)temp;
-	ndev->dev_addr[0] = (u8)(temp >> 8);
+	addr[1] = (u8)temp;
+	addr[0] = (u8)(temp >> 8);
 
-	if (is_valid_ether_addr(ndev->dev_addr)) {
+	if (is_valid_ether_addr(addr)) {
+		eth_hw_addr_set(ndev, addr);
 		if (netif_msg_probe(ax_local))
 			dev_info(&ax_local->spi->dev,
 				 "MAC address read from ASIX chip\n");
@@ -934,7 +936,7 @@ static const struct net_device_ops ax88796c_netdev_ops = {
 	.ndo_stop		= ax88796c_close,
 	.ndo_start_xmit		= ax88796c_start_xmit,
 	.ndo_get_stats64	= ax88796c_get_stats64,
-	.ndo_do_ioctl		= ax88796c_ioctl,
+	.ndo_eth_ioctl		= ax88796c_ioctl,
 	.ndo_set_mac_address	= eth_mac_addr,
 	.ndo_set_features	= ax88796c_set_features,
 };
@@ -1114,11 +1116,13 @@ static int ax88796c_remove(struct spi_device *spi)
 	return 0;
 }
 
+#ifdef CONFIG_OF
 static const struct of_device_id ax88796c_dt_ids[] = {
 	{ .compatible = "asix,ax88796c" },
 	{},
 };
 MODULE_DEVICE_TABLE(of, ax88796c_dt_ids);
+#endif
 
 static const struct spi_device_id asix_id[] = {
 	{ "ax88796c", 0 },

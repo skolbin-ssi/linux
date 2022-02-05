@@ -86,7 +86,8 @@ static int gve_rx_alloc_buffer(struct gve_priv *priv, struct device *dev,
 	dma_addr_t dma;
 	int err;
 
-	err = gve_alloc_page(priv, dev, &page, &dma, DMA_FROM_DEVICE);
+	err = gve_alloc_page(priv, dev, &page, &dma, DMA_FROM_DEVICE,
+			     GFP_ATOMIC);
 	if (err)
 		return err;
 
@@ -500,7 +501,8 @@ static struct sk_buff *gve_rx_skb(struct gve_priv *priv, struct gve_rx_ring *rx,
 			rx->rx_copied_pkt++;
 			rx->rx_frag_copy_cnt++;
 			rx->rx_copybreak_pkt++;
-		}	u64_stats_update_end(&rx->statss);
+			u64_stats_update_end(&rx->statss);
+		}
 	} else {
 		if (rx->data.raw_addressing) {
 			int recycle = gve_rx_can_recycle_buffer(page_info);
@@ -638,8 +640,6 @@ bool gve_rx_work_pending(struct gve_rx_ring *rx)
 	desc = rx->desc.desc_ring + next_idx;
 
 	flags_seq = desc->flags_seq;
-	/* Make sure we have synchronized the seq no with the device */
-	smp_rmb();
 
 	return (GVE_SEQNO(flags_seq) == rx->desc.seqno);
 }

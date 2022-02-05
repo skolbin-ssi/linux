@@ -390,6 +390,13 @@ static int bpf_adj_branches(struct bpf_prog *prog, u32 pos, s32 end_old,
 			i = end_new;
 			insn = prog->insnsi + end_old;
 		}
+		if (bpf_pseudo_func(insn)) {
+			ret = bpf_adj_delta_to_imm(insn, pos, end_old,
+						   end_new, i, probe_pass);
+			if (ret)
+				return ret;
+			continue;
+		}
 		code = insn->code;
 		if ((BPF_CLASS(code) != BPF_JMP &&
 		     BPF_CLASS(code) != BPF_JMP32) ||
@@ -1567,7 +1574,8 @@ select_insn:
 
 		if (unlikely(index >= array->map.max_entries))
 			goto out;
-		if (unlikely(tail_call_cnt > MAX_TAIL_CALL_CNT))
+
+		if (unlikely(tail_call_cnt >= MAX_TAIL_CALL_CNT))
 			goto out;
 
 		tail_call_cnt++;
@@ -1884,7 +1892,7 @@ static void bpf_prog_select_func(struct bpf_prog *fp)
 
 /**
  *	bpf_prog_select_runtime - select exec runtime for BPF program
- *	@fp: bpf_prog populated with internal BPF program
+ *	@fp: bpf_prog populated with BPF program
  *	@err: pointer to error variable
  *
  * Try to JIT eBPF program, if JIT is not available, use interpreter.
@@ -2293,7 +2301,6 @@ static void bpf_prog_free_deferred(struct work_struct *work)
 	}
 }
 
-/* Free internal BPF program */
 void bpf_prog_free(struct bpf_prog *fp)
 {
 	struct bpf_prog_aux *aux = fp->aux;

@@ -12,7 +12,7 @@
 static void ocelot_xmit_get_vlan_info(struct sk_buff *skb, struct dsa_port *dp,
 				      u64 *vlan_tci, u64 *tag_type)
 {
-	struct net_device *br = READ_ONCE(dp->bridge_dev);
+	struct net_device *br = dsa_port_bridge_dev_get(dp);
 	struct vlan_ethhdr *hdr;
 	u16 proto, tci;
 
@@ -47,8 +47,12 @@ static void ocelot_xmit_common(struct sk_buff *skb, struct net_device *netdev,
 	void *injection;
 	__be32 *prefix;
 	u32 rew_op = 0;
+	u64 qos_class;
 
 	ocelot_xmit_get_vlan_info(skb, dp, &vlan_tci, &tag_type);
+
+	qos_class = netdev_get_num_tc(netdev) ?
+		    netdev_get_prio_tc_map(netdev, skb->priority) : skb->priority;
 
 	injection = skb_push(skb, OCELOT_TAG_LEN);
 	prefix = skb_push(skb, OCELOT_SHORT_PREFIX_LEN);
@@ -57,7 +61,7 @@ static void ocelot_xmit_common(struct sk_buff *skb, struct net_device *netdev,
 	memset(injection, 0, OCELOT_TAG_LEN);
 	ocelot_ifh_set_bypass(injection, 1);
 	ocelot_ifh_set_src(injection, ds->num_ports);
-	ocelot_ifh_set_qos_class(injection, skb->priority);
+	ocelot_ifh_set_qos_class(injection, qos_class);
 	ocelot_ifh_set_vlan_tci(injection, vlan_tci);
 	ocelot_ifh_set_tag_type(injection, tag_type);
 
@@ -101,6 +105,7 @@ static struct sk_buff *ocelot_rcv(struct sk_buff *skb,
 	struct dsa_port *dp;
 	u8 *extraction;
 	u16 vlan_tpid;
+	u64 rew_val;
 
 	/* Revert skb->data by the amount consumed by the DSA master,
 	 * so it points to the beginning of the frame.
@@ -130,6 +135,7 @@ static struct sk_buff *ocelot_rcv(struct sk_buff *skb,
 	ocelot_xfh_get_qos_class(extraction, &qos_class);
 	ocelot_xfh_get_tag_type(extraction, &tag_type);
 	ocelot_xfh_get_vlan_tci(extraction, &vlan_tci);
+	ocelot_xfh_get_rew_val(extraction, &rew_val);
 
 	skb->dev = dsa_master_find_slave(netdev, 0, src_port);
 	if (!skb->dev)
@@ -143,6 +149,7 @@ static struct sk_buff *ocelot_rcv(struct sk_buff *skb,
 
 	dsa_default_offload_fwd_mark(skb);
 	skb->priority = qos_class;
+	OCELOT_SKB_CB(skb)->tstamp_lo = rew_val;
 
 	/* Ocelot switches copy frames unmodified to the CPU. However, it is
 	 * possible for the user to request a VLAN modification through

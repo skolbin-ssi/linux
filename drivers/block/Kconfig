@@ -371,6 +371,7 @@ config XEN_BLKDEV_BACKEND
 config VIRTIO_BLK
 	tristate "Virtio block driver"
 	depends on VIRTIO
+	select SG_POOL
 	help
 	  This is the virtual block driver for virtio.  It can be used with
           QEMU based VMMs (like KVM or Xen).  Say Y or M.
@@ -390,17 +391,6 @@ config BLK_DEV_RBD
 	  More information at http://ceph.newdream.net/.
 
 	  If unsure, say N.
-
-config BLK_DEV_RSXX
-	tristate "IBM Flash Adapter 900GB Full Height PCIe Device Driver"
-	depends on PCI
-	select CRC32
-	help
-	  Device driver for IBM's high speed PCIe SSD
-	  storage device: Flash Adapter 900GB Full Height.
-
-	  To compile this driver as a module, choose M here: the
-	  module will be called rsxx.
 
 source "drivers/block/rnbd/Kconfig"
 

@@ -120,6 +120,8 @@
 #define AUDIT_EVENT_LISTENER	1335	/* Task joined multicast read socket */
 #define AUDIT_URINGOP		1336	/* io_uring operation */
 #define AUDIT_OPENAT2		1337	/* Record showing openat2 how args */
+#define AUDIT_DM_CTRL		1338	/* Device Mapper target control */
+#define AUDIT_DM_EVENT		1339	/* Device Mapper events */
 
 #define AUDIT_AVC		1400	/* SE Linux avc denial or grant */
 #define AUDIT_SELINUX_ERR	1401	/* Internal SE Linux Errors */
@@ -512,7 +514,7 @@ struct audit_rule_data {
 	__u32		values[AUDIT_MAX_FIELDS];
 	__u32		fieldflags[AUDIT_MAX_FIELDS];
 	__u32		buflen;	/* total length of string fields */
-	char		buf[0];	/* string fields buffer */
+	char		buf[];	/* string fields buffer */
 };
 
 #endif /* _UAPI_LINUX_AUDIT_H_ */

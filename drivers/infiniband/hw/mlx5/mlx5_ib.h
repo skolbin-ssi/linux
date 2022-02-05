@@ -232,6 +232,7 @@ enum {
 #define MLX5_IB_NUM_FLOW_FT		(MLX5_IB_FLOW_LEFTOVERS_PRIO + 1)
 #define MLX5_IB_NUM_SNIFFER_FTS		2
 #define MLX5_IB_NUM_EGRESS_FTS		1
+#define MLX5_IB_NUM_FDB_FTS		MLX5_BY_PASS_NUM_REGULAR_PRIOS
 struct mlx5_ib_flow_prio {
 	struct mlx5_flow_table		*flow_table;
 	unsigned int			refcount;
@@ -263,14 +264,23 @@ struct mlx5_ib_pp {
 	struct mlx5_core_dev *mdev;
 };
 
+enum mlx5_ib_optional_counter_type {
+	MLX5_IB_OPCOUNTER_CC_RX_CE_PKTS,
+	MLX5_IB_OPCOUNTER_CC_RX_CNP_PKTS,
+	MLX5_IB_OPCOUNTER_CC_TX_CNP_PKTS,
+
+	MLX5_IB_OPCOUNTER_MAX,
+};
+
 struct mlx5_ib_flow_db {
 	struct mlx5_ib_flow_prio	prios[MLX5_IB_NUM_FLOW_FT];
 	struct mlx5_ib_flow_prio	egress_prios[MLX5_IB_NUM_FLOW_FT];
 	struct mlx5_ib_flow_prio	sniffer[MLX5_IB_NUM_SNIFFER_FTS];
 	struct mlx5_ib_flow_prio	egress[MLX5_IB_NUM_EGRESS_FTS];
-	struct mlx5_ib_flow_prio	fdb;
+	struct mlx5_ib_flow_prio	fdb[MLX5_IB_NUM_FDB_FTS];
 	struct mlx5_ib_flow_prio	rdma_rx[MLX5_IB_NUM_FLOW_FT];
 	struct mlx5_ib_flow_prio	rdma_tx[MLX5_IB_NUM_FLOW_FT];
+	struct mlx5_ib_flow_prio	opfcs[MLX5_IB_OPCOUNTER_MAX];
 	struct mlx5_flow_table		*lag_demux_ft;
 	/* Protect flow steering bypass flow tables
 	 * when add/del flow rules.
@@ -655,9 +665,9 @@ struct mlx5_ib_mr {
 
 	/* User MR data */
 	struct mlx5_cache_ent *cache_ent;
+	/* Everything after cache_ent is zero'd when MR allocated */
 	struct ib_umem *umem;
 
-	/* This is zero'd when the MR is allocated */
 	union {
 		/* Used only while the MR is in the cache */
 		struct {
@@ -709,7 +719,7 @@ struct mlx5_ib_mr {
 /* Zero the fields in the mr that are variant depending on usage */
 static inline void mlx5_clear_mr(struct mlx5_ib_mr *mr)
 {
-	memset(mr->out, 0, sizeof(*mr) - offsetof(struct mlx5_ib_mr, out));
+	memset_after(mr, 0, cache_ent);
 }
 
 static inline bool is_odp_mr(struct mlx5_ib_mr *mr)
@@ -804,14 +814,31 @@ struct mlx5_ib_resources {
 	struct mlx5_ib_port_resources ports[2];
 };
 
+#define MAX_OPFC_RULES 2
+
+struct mlx5_ib_op_fc {
+	struct mlx5_fc *fc;
+	struct mlx5_flow_handle *rule[MAX_OPFC_RULES];
+};
+
 struct mlx5_ib_counters {
-	const char **names;
+	struct rdma_stat_desc *descs;
 	size_t *offsets;
 	u32 num_q_counters;
 	u32 num_cong_counters;
 	u32 num_ext_ppcnt_counters;
+	u32 num_op_counters;
 	u16 set_id;
+	struct mlx5_ib_op_fc opfcs[MLX5_IB_OPCOUNTER_MAX];
 };
+
+int mlx5_ib_fs_add_op_fc(struct mlx5_ib_dev *dev, u32 port_num,
+			 struct mlx5_ib_op_fc *opfc,
+			 enum mlx5_ib_optional_counter_type type);
+
+void mlx5_ib_fs_remove_op_fc(struct mlx5_ib_dev *dev,
+			     struct mlx5_ib_op_fc *opfc,
+			     enum mlx5_ib_optional_counter_type type);
 
 struct mlx5_ib_multiport_info;
 
@@ -1438,14 +1465,6 @@ extern const struct uapi_definition mlx5_ib_devx_defs[];
 extern const struct uapi_definition mlx5_ib_flow_defs[];
 extern const struct uapi_definition mlx5_ib_qos_defs[];
 extern const struct uapi_definition mlx5_ib_std_types_defs[];
-
-static inline void init_query_mad(struct ib_smp *mad)
-{
-	mad->base_version  = 1;
-	mad->mgmt_class    = IB_MGMT_CLASS_SUBN_LID_ROUTED;
-	mad->class_version = 1;
-	mad->method	   = IB_MGMT_METHOD_GET;
-}
 
 static inline int is_qp1(enum ib_qp_type qp_type)
 {

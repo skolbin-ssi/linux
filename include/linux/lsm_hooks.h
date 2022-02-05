@@ -180,8 +180,6 @@
  *	Copy all security options from a given superblock to another
  *	@oldsb old superblock which contain information to clone
  *	@newsb new superblock which needs filled in
- * @sb_add_mnt_opt:
- * 	Add one mount @option to @mnt_opts.
  * @sb_parse_opts_str:
  *	Parse a string of security data filling in the opts structure
  *	@options string containing all mount options known by the LSM
@@ -719,11 +717,9 @@
  *	@p.
  *	@p contains the task_struct for the process.
  *	Return 0 if permission is granted.
- * @task_getsecid_subj:
- *	Retrieve the subjective security identifier of the task_struct in @p
- *	and return it in @secid.  Special care must be taken to ensure that @p
- *	is the either the "current" task, or the caller has exclusive access
- *	to @p.
+ * @current_getsecid_subj:
+ *	Retrieve the subjective security identifier of the current task and
+ *	return it in @secid.
  *	In case of failure, @secid will be set to zero.
  * @task_getsecid_obj:
  *	Retrieve the objective security identifier of the task_struct in @p
@@ -1027,9 +1023,9 @@
  * Security hooks for SCTP
  *
  * @sctp_assoc_request:
- *	Passes the @ep and @chunk->skb of the association INIT packet to
+ *	Passes the @asoc and @chunk->skb of the association INIT packet to
  *	the security module.
- *	@ep pointer to sctp endpoint structure.
+ *	@asoc pointer to sctp association structure.
  *	@skb pointer to skbuff of association packet.
  *	Return 0 on success, error on failure.
  * @sctp_bind_connect:
@@ -1047,9 +1043,9 @@
  *	Called whenever a new socket is created by accept(2) (i.e. a TCP
  *	style socket) or when a socket is 'peeled off' e.g userspace
  *	calls sctp_peeloff(3).
- *	@ep pointer to current sctp endpoint structure.
+ *	@asoc pointer to current sctp association structure.
  *	@sk pointer to current sock structure.
- *	@sk pointer to new sock structure.
+ *	@newsk pointer to new sock structure.
  *
  * Security hooks for Infiniband
  *

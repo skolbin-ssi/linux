@@ -1502,7 +1502,7 @@ static void setup_req_params( int drive )
 static blk_status_t ataflop_queue_rq(struct blk_mq_hw_ctx *hctx,
 				     const struct blk_mq_queue_data *bd)
 {
-	struct atari_floppy_struct *floppy = bd->rq->rq_disk->private_data;
+	struct atari_floppy_struct *floppy = bd->rq->q->disk->private_data;
 	int drive = floppy - unit;
 	int type = floppy->type;
 
@@ -1538,7 +1538,7 @@ static blk_status_t ataflop_queue_rq(struct blk_mq_hw_ctx *hctx,
 		if (!UDT) {
 			Probing = 1;
 			UDT = atari_disk_type + StartDiskType[DriveType];
-			set_capacity(bd->rq->rq_disk, UDT->blocks);
+			set_capacity(bd->rq->q->disk, UDT->blocks);
 			UD.autoprobe = 1;
 		}
 	} 
@@ -1558,7 +1558,7 @@ static blk_status_t ataflop_queue_rq(struct blk_mq_hw_ctx *hctx,
 		}
 		type = minor2disktype[type].index;
 		UDT = &atari_disk_type[type];
-		set_capacity(bd->rq->rq_disk, UDT->blocks);
+		set_capacity(bd->rq->q->disk, UDT->blocks);
 		UD.autoprobe = 0;
 	}
 
@@ -2000,6 +2000,7 @@ static int ataflop_alloc_disk(unsigned int drive, unsigned int type)
 	disk->minors = 1;
 	sprintf(disk->disk_name, "fd%d", drive);
 	disk->fops = &floppy_fops;
+	disk->flags |= GENHD_FL_NO_PART;
 	disk->events = DISK_EVENT_MEDIA_CHANGE;
 	disk->private_data = &unit[drive];
 	set_capacity(disk, MAX_DISK_SIZE * 2);
@@ -2007,8 +2008,6 @@ static int ataflop_alloc_disk(unsigned int drive, unsigned int type)
 	unit[drive].disk[type] = disk;
 	return 0;
 }
-
-static DEFINE_MUTEX(ataflop_probe_lock);
 
 static void ataflop_probe(dev_t dev)
 {
@@ -2020,14 +2019,38 @@ static void ataflop_probe(dev_t dev)
 
 	if (drive >= FD_MAX_UNITS || type >= NUM_DISK_MINORS)
 		return;
-	mutex_lock(&ataflop_probe_lock);
-	if (!unit[drive].disk[type]) {
-		if (ataflop_alloc_disk(drive, type) == 0) {
-			add_disk(unit[drive].disk[type]);
-			unit[drive].registered[type] = true;
+	if (unit[drive].disk[type])
+		return;
+	if (ataflop_alloc_disk(drive, type))
+		return;
+	if (add_disk(unit[drive].disk[type]))
+		goto cleanup_disk;
+	unit[drive].registered[type] = true;
+	return;
+
+cleanup_disk:
+	blk_cleanup_disk(unit[drive].disk[type]);
+	unit[drive].disk[type] = NULL;
+}
+
+static void atari_floppy_cleanup(void)
+{
+	int i;
+	int type;
+
+	for (i = 0; i < FD_MAX_UNITS; i++) {
+		for (type = 0; type < NUM_DISK_MINORS; type++) {
+			if (!unit[i].disk[type])
+				continue;
+			del_gendisk(unit[i].disk[type]);
+			blk_cleanup_queue(unit[i].disk[type]->queue);
+			put_disk(unit[i].disk[type]);
 		}
+		blk_mq_free_tag_set(&unit[i].tag_set);
 	}
-	mutex_unlock(&ataflop_probe_lock);
+
+	del_timer_sync(&fd_timer);
+	atari_stram_free(DMABuffer);
 }
 
 static void atari_cleanup_floppy_disk(struct atari_floppy_struct *fs)
@@ -2052,11 +2075,6 @@ static int __init atari_floppy_init (void)
 	if (!MACH_IS_ATARI)
 		/* Amiga, Mac, ... don't have Atari-compatible floppy :-) */
 		return -ENODEV;
-
-	mutex_lock(&ataflop_probe_lock);
-	ret = __register_blkdev(FLOPPY_MAJOR, "fd", ataflop_probe);
-	if (ret)
-		goto out_unlock;
 
 	for (i = 0; i < FD_MAX_UNITS; i++) {
 		memset(&unit[i].tag_set, 0, sizeof(unit[i].tag_set));
@@ -2113,7 +2131,12 @@ static int __init atari_floppy_init (void)
 	       UseTrackbuffer ? "" : "no ");
 	config_types();
 
-	return 0;
+	ret = __register_blkdev(FLOPPY_MAJOR, "fd", ataflop_probe);
+	if (ret) {
+		printk(KERN_ERR "atari_floppy_init: cannot register block device\n");
+		atari_floppy_cleanup();
+	}
+	return ret;
 
 err_out_dma:
 	atari_stram_free(DMABuffer);
@@ -2121,9 +2144,6 @@ err:
 	while (--i >= 0)
 		atari_cleanup_floppy_disk(&unit[i]);
 
-	unregister_blkdev(FLOPPY_MAJOR, "fd");
-out_unlock:
-	mutex_unlock(&ataflop_probe_lock);
 	return ret;
 }
 
@@ -2168,14 +2188,8 @@ __setup("floppy=", atari_floppy_setup);
 
 static void __exit atari_floppy_exit(void)
 {
-	int i;
-
-	for (i = 0; i < FD_MAX_UNITS; i++)
-		atari_cleanup_floppy_disk(&unit[i]);
 	unregister_blkdev(FLOPPY_MAJOR, "fd");
-
-	del_timer_sync(&fd_timer);
-	atari_stram_free( DMABuffer );
+	atari_floppy_cleanup();
 }
 
 module_init(atari_floppy_init)

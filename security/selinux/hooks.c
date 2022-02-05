@@ -230,19 +230,6 @@ static inline u32 cred_sid(const struct cred *cred)
 }
 
 /*
- * get the subjective security ID of a task
- */
-static inline u32 task_sid_subj(const struct task_struct *task)
-{
-	u32 sid;
-
-	rcu_read_lock();
-	sid = cred_sid(rcu_dereference(task->cred));
-	rcu_read_unlock();
-	return sid;
-}
-
-/*
  * get the objective security ID of a task
  */
 static inline u32 task_sid_obj(const struct task_struct *task)
@@ -611,10 +598,11 @@ static int bad_option(struct superblock_security_struct *sbsec, char flag,
 	return 0;
 }
 
-static int parse_sid(struct super_block *sb, const char *s, u32 *sid)
+static int parse_sid(struct super_block *sb, const char *s, u32 *sid,
+		     gfp_t gfp)
 {
 	int rc = security_context_str_to_sid(&selinux_state, s,
-					     sid, GFP_KERNEL);
+					     sid, gfp);
 	if (rc)
 		pr_warn("SELinux: security_context_str_to_sid"
 		       "(%s) failed for (dev %s, type %s) errno=%d\n",
@@ -685,7 +673,8 @@ static int selinux_set_mnt_opts(struct super_block *sb,
 	 */
 	if (opts) {
 		if (opts->fscontext) {
-			rc = parse_sid(sb, opts->fscontext, &fscontext_sid);
+			rc = parse_sid(sb, opts->fscontext, &fscontext_sid,
+					GFP_KERNEL);
 			if (rc)
 				goto out;
 			if (bad_option(sbsec, FSCONTEXT_MNT, sbsec->sid,
@@ -694,7 +683,8 @@ static int selinux_set_mnt_opts(struct super_block *sb,
 			sbsec->flags |= FSCONTEXT_MNT;
 		}
 		if (opts->context) {
-			rc = parse_sid(sb, opts->context, &context_sid);
+			rc = parse_sid(sb, opts->context, &context_sid,
+					GFP_KERNEL);
 			if (rc)
 				goto out;
 			if (bad_option(sbsec, CONTEXT_MNT, sbsec->mntpoint_sid,
@@ -703,7 +693,8 @@ static int selinux_set_mnt_opts(struct super_block *sb,
 			sbsec->flags |= CONTEXT_MNT;
 		}
 		if (opts->rootcontext) {
-			rc = parse_sid(sb, opts->rootcontext, &rootcontext_sid);
+			rc = parse_sid(sb, opts->rootcontext, &rootcontext_sid,
+					GFP_KERNEL);
 			if (rc)
 				goto out;
 			if (bad_option(sbsec, ROOTCONTEXT_MNT, root_isec->sid,
@@ -712,7 +703,8 @@ static int selinux_set_mnt_opts(struct super_block *sb,
 			sbsec->flags |= ROOTCONTEXT_MNT;
 		}
 		if (opts->defcontext) {
-			rc = parse_sid(sb, opts->defcontext, &defcontext_sid);
+			rc = parse_sid(sb, opts->defcontext, &defcontext_sid,
+					GFP_KERNEL);
 			if (rc)
 				goto out;
 			if (bad_option(sbsec, DEFCONTEXT_MNT, sbsec->def_sid,
@@ -983,82 +975,54 @@ out:
 static int selinux_add_opt(int token, const char *s, void **mnt_opts)
 {
 	struct selinux_mnt_opts *opts = *mnt_opts;
+	bool is_alloc_opts = false;
 
-	if (token == Opt_seclabel)	/* eaten and completely ignored */
+	if (token == Opt_seclabel)
+		/* eaten and completely ignored */
 		return 0;
+	if (!s)
+		return -ENOMEM;
 
 	if (!opts) {
-		opts = kzalloc(sizeof(struct selinux_mnt_opts), GFP_KERNEL);
+		opts = kzalloc(sizeof(*opts), GFP_KERNEL);
 		if (!opts)
 			return -ENOMEM;
 		*mnt_opts = opts;
+		is_alloc_opts = true;
 	}
-	if (!s)
-		return -ENOMEM;
+
 	switch (token) {
 	case Opt_context:
 		if (opts->context || opts->defcontext)
-			goto Einval;
+			goto err;
 		opts->context = s;
 		break;
 	case Opt_fscontext:
 		if (opts->fscontext)
-			goto Einval;
+			goto err;
 		opts->fscontext = s;
 		break;
 	case Opt_rootcontext:
 		if (opts->rootcontext)
-			goto Einval;
+			goto err;
 		opts->rootcontext = s;
 		break;
 	case Opt_defcontext:
 		if (opts->context || opts->defcontext)
-			goto Einval;
+			goto err;
 		opts->defcontext = s;
 		break;
 	}
+
 	return 0;
-Einval:
-	pr_warn(SEL_MOUNT_FAIL_MSG);
-	return -EINVAL;
-}
 
-static int selinux_add_mnt_opt(const char *option, const char *val, int len,
-			       void **mnt_opts)
-{
-	int token = Opt_error;
-	int rc, i;
-
-	for (i = 0; i < ARRAY_SIZE(tokens); i++) {
-		if (strcmp(option, tokens[i].name) == 0) {
-			token = tokens[i].opt;
-			break;
-		}
-	}
-
-	if (token == Opt_error)
-		return -EINVAL;
-
-	if (token != Opt_seclabel) {
-		val = kmemdup_nul(val, len, GFP_KERNEL);
-		if (!val) {
-			rc = -ENOMEM;
-			goto free_opt;
-		}
-	}
-	rc = selinux_add_opt(token, val, mnt_opts);
-	if (unlikely(rc)) {
-		kfree(val);
-		goto free_opt;
-	}
-	return rc;
-
-free_opt:
-	if (*mnt_opts) {
-		selinux_free_mnt_opts(*mnt_opts);
+err:
+	if (is_alloc_opts) {
+		kfree(opts);
 		*mnt_opts = NULL;
 	}
-	return rc;
+	pr_warn(SEL_MOUNT_FAIL_MSG);
+	return -EINVAL;
 }
 
 static int show_sid(struct seq_file *m, u32 sid)
@@ -2702,14 +2666,14 @@ static int selinux_sb_mnt_opts_compat(struct super_block *sb, void *mnt_opts)
 		return (sbsec->flags & SE_MNTMASK) ? 1 : 0;
 
 	if (opts->fscontext) {
-		rc = parse_sid(sb, opts->fscontext, &sid);
+		rc = parse_sid(sb, opts->fscontext, &sid, GFP_NOWAIT);
 		if (rc)
 			return 1;
 		if (bad_option(sbsec, FSCONTEXT_MNT, sbsec->sid, sid))
 			return 1;
 	}
 	if (opts->context) {
-		rc = parse_sid(sb, opts->context, &sid);
+		rc = parse_sid(sb, opts->context, &sid, GFP_NOWAIT);
 		if (rc)
 			return 1;
 		if (bad_option(sbsec, CONTEXT_MNT, sbsec->mntpoint_sid, sid))
@@ -2719,14 +2683,14 @@ static int selinux_sb_mnt_opts_compat(struct super_block *sb, void *mnt_opts)
 		struct inode_security_struct *root_isec;
 
 		root_isec = backing_inode_security(sb->s_root);
-		rc = parse_sid(sb, opts->rootcontext, &sid);
+		rc = parse_sid(sb, opts->rootcontext, &sid, GFP_NOWAIT);
 		if (rc)
 			return 1;
 		if (bad_option(sbsec, ROOTCONTEXT_MNT, root_isec->sid, sid))
 			return 1;
 	}
 	if (opts->defcontext) {
-		rc = parse_sid(sb, opts->defcontext, &sid);
+		rc = parse_sid(sb, opts->defcontext, &sid, GFP_NOWAIT);
 		if (rc)
 			return 1;
 		if (bad_option(sbsec, DEFCONTEXT_MNT, sbsec->def_sid, sid))
@@ -2749,14 +2713,14 @@ static int selinux_sb_remount(struct super_block *sb, void *mnt_opts)
 		return 0;
 
 	if (opts->fscontext) {
-		rc = parse_sid(sb, opts->fscontext, &sid);
+		rc = parse_sid(sb, opts->fscontext, &sid, GFP_KERNEL);
 		if (rc)
 			return rc;
 		if (bad_option(sbsec, FSCONTEXT_MNT, sbsec->sid, sid))
 			goto out_bad_option;
 	}
 	if (opts->context) {
-		rc = parse_sid(sb, opts->context, &sid);
+		rc = parse_sid(sb, opts->context, &sid, GFP_KERNEL);
 		if (rc)
 			return rc;
 		if (bad_option(sbsec, CONTEXT_MNT, sbsec->mntpoint_sid, sid))
@@ -2765,14 +2729,14 @@ static int selinux_sb_remount(struct super_block *sb, void *mnt_opts)
 	if (opts->rootcontext) {
 		struct inode_security_struct *root_isec;
 		root_isec = backing_inode_security(sb->s_root);
-		rc = parse_sid(sb, opts->rootcontext, &sid);
+		rc = parse_sid(sb, opts->rootcontext, &sid, GFP_KERNEL);
 		if (rc)
 			return rc;
 		if (bad_option(sbsec, ROOTCONTEXT_MNT, root_isec->sid, sid))
 			goto out_bad_option;
 	}
 	if (opts->defcontext) {
-		rc = parse_sid(sb, opts->defcontext, &sid);
+		rc = parse_sid(sb, opts->defcontext, &sid, GFP_KERNEL);
 		if (rc)
 			return rc;
 		if (bad_option(sbsec, DEFCONTEXT_MNT, sbsec->def_sid, sid))
@@ -4205,9 +4169,9 @@ static int selinux_task_getsid(struct task_struct *p)
 			    PROCESS__GETSESSION, NULL);
 }
 
-static void selinux_task_getsecid_subj(struct task_struct *p, u32 *secid)
+static void selinux_current_getsecid_subj(u32 *secid)
 {
-	*secid = task_sid_subj(p);
+	*secid = current_sid();
 }
 
 static void selinux_task_getsecid_obj(struct task_struct *p, u32 *secid)
@@ -5339,10 +5303,10 @@ static void selinux_sock_graft(struct sock *sk, struct socket *parent)
  * connect(2), sctp_connectx(3) or sctp_sendmsg(3) (with no association
  * already present).
  */
-static int selinux_sctp_assoc_request(struct sctp_endpoint *ep,
+static int selinux_sctp_assoc_request(struct sctp_association *asoc,
 				      struct sk_buff *skb)
 {
-	struct sk_security_struct *sksec = ep->base.sk->sk_security;
+	struct sk_security_struct *sksec = asoc->base.sk->sk_security;
 	struct common_audit_data ad;
 	struct lsm_network_audit net = {0,};
 	u8 peerlbl_active;
@@ -5359,7 +5323,7 @@ static int selinux_sctp_assoc_request(struct sctp_endpoint *ep,
 		/* This will return peer_sid = SECSID_NULL if there are
 		 * no peer labels, see security_net_peersid_resolve().
 		 */
-		err = selinux_skb_peerlbl_sid(skb, ep->base.sk->sk_family,
+		err = selinux_skb_peerlbl_sid(skb, asoc->base.sk->sk_family,
 					      &peer_sid);
 		if (err)
 			return err;
@@ -5383,7 +5347,7 @@ static int selinux_sctp_assoc_request(struct sctp_endpoint *ep,
 		 */
 		ad.type = LSM_AUDIT_DATA_NET;
 		ad.u.net = &net;
-		ad.u.net->sk = ep->base.sk;
+		ad.u.net->sk = asoc->base.sk;
 		err = avc_has_perm(&selinux_state,
 				   sksec->peer_sid, peer_sid, sksec->sclass,
 				   SCTP_SOCKET__ASSOCIATION, &ad);
@@ -5392,7 +5356,7 @@ static int selinux_sctp_assoc_request(struct sctp_endpoint *ep,
 	}
 
 	/* Compute the MLS component for the connection and store
-	 * the information in ep. This will be used by SCTP TCP type
+	 * the information in asoc. This will be used by SCTP TCP type
 	 * sockets and peeled off connections as they cause a new
 	 * socket to be generated. selinux_sctp_sk_clone() will then
 	 * plug this into the new socket.
@@ -5401,11 +5365,11 @@ static int selinux_sctp_assoc_request(struct sctp_endpoint *ep,
 	if (err)
 		return err;
 
-	ep->secid = conn_sid;
-	ep->peer_secid = peer_sid;
+	asoc->secid = conn_sid;
+	asoc->peer_secid = peer_sid;
 
 	/* Set any NetLabel labels including CIPSO/CALIPSO options. */
-	return selinux_netlbl_sctp_assoc_request(ep, skb);
+	return selinux_netlbl_sctp_assoc_request(asoc, skb);
 }
 
 /* Check if sctp IPv4/IPv6 addresses are valid for binding or connecting
@@ -5490,7 +5454,7 @@ static int selinux_sctp_bind_connect(struct sock *sk, int optname,
 }
 
 /* Called whenever a new socket is created by accept(2) or sctp_peeloff(3). */
-static void selinux_sctp_sk_clone(struct sctp_endpoint *ep, struct sock *sk,
+static void selinux_sctp_sk_clone(struct sctp_association *asoc, struct sock *sk,
 				  struct sock *newsk)
 {
 	struct sk_security_struct *sksec = sk->sk_security;
@@ -5502,8 +5466,8 @@ static void selinux_sctp_sk_clone(struct sctp_endpoint *ep, struct sock *sk,
 	if (!selinux_policycap_extsockclass())
 		return selinux_sk_clone_security(sk, newsk);
 
-	newsksec->sid = ep->secid;
-	newsksec->peer_sid = ep->peer_secid;
+	newsksec->sid = asoc->secid;
+	newsksec->peer_sid = asoc->peer_secid;
 	newsksec->sclass = sksec->sclass;
 	selinux_netlbl_sctp_sk_clone(sk, newsk);
 }
@@ -5780,7 +5744,7 @@ static unsigned int selinux_ip_postroute_compat(struct sk_buff *skb,
 	struct sk_security_struct *sksec;
 	struct common_audit_data ad;
 	struct lsm_network_audit net = {0,};
-	u8 proto;
+	u8 proto = 0;
 
 	sk = skb_to_full_sk(skb);
 	if (sk == NULL)
@@ -7159,7 +7123,7 @@ static struct security_hook_list selinux_hooks[] __lsm_ro_after_init = {
 	LSM_HOOK_INIT(task_setpgid, selinux_task_setpgid),
 	LSM_HOOK_INIT(task_getpgid, selinux_task_getpgid),
 	LSM_HOOK_INIT(task_getsid, selinux_task_getsid),
-	LSM_HOOK_INIT(task_getsecid_subj, selinux_task_getsecid_subj),
+	LSM_HOOK_INIT(current_getsecid_subj, selinux_current_getsecid_subj),
 	LSM_HOOK_INIT(task_getsecid_obj, selinux_task_getsecid_obj),
 	LSM_HOOK_INIT(task_setnice, selinux_task_setnice),
 	LSM_HOOK_INIT(task_setioprio, selinux_task_setioprio),
@@ -7298,7 +7262,6 @@ static struct security_hook_list selinux_hooks[] __lsm_ro_after_init = {
 	LSM_HOOK_INIT(fs_context_dup, selinux_fs_context_dup),
 	LSM_HOOK_INIT(fs_context_parse_param, selinux_fs_context_parse_param),
 	LSM_HOOK_INIT(sb_eat_lsm_opts, selinux_sb_eat_lsm_opts),
-	LSM_HOOK_INIT(sb_add_mnt_opt, selinux_add_mnt_opt),
 #ifdef CONFIG_SECURITY_NETWORK_XFRM
 	LSM_HOOK_INIT(xfrm_policy_clone_security, selinux_xfrm_policy_clone),
 #endif
