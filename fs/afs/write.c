@@ -60,7 +60,7 @@ int afs_write_begin(struct file *file, struct address_space *mapping,
 	 * file.  We need to do this before we get a lock on the page in case
 	 * there's more than one writer competing for the same cache block.
 	 */
-	ret = netfs_write_begin(file, mapping, pos, len, &folio, fsdata);
+	ret = netfs_write_begin(&vnode->netfs, file, mapping, pos, len, &folio, fsdata);
 	if (ret < 0)
 		return ret;
 
@@ -91,7 +91,7 @@ try_again:
 			goto flush_conflicting_write;
 	}
 
-	*_page = &folio->page;
+	*_page = folio_file_page(folio, pos / PAGE_SIZE);
 	_leave(" = 0");
 	return 0;
 
