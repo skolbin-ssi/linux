@@ -746,6 +746,8 @@ static int tx_macro_put_dec_enum(struct snd_kcontrol *kcontrol,
 	struct tx_macro *tx = snd_soc_component_get_drvdata(component);
 
 	val = ucontrol->value.enumerated.item[0];
+	if (val >= e->items)
+		return -EINVAL;
 
 	switch (e->reg) {
 	case CDC_TX_INP_MUX_ADC_MUX0_CFG0:
@@ -772,6 +774,9 @@ static int tx_macro_put_dec_enum(struct snd_kcontrol *kcontrol,
 	case CDC_TX_INP_MUX_ADC_MUX7_CFG0:
 		mic_sel_reg = CDC_TX7_TX_PATH_CFG0;
 		break;
+	default:
+		dev_err(component->dev, "Error in configuration!!\n");
+		return -EINVAL;
 	}
 
 	if (val != 0) {
@@ -1962,25 +1967,25 @@ static int tx_macro_probe(struct platform_device *pdev)
 
 	tx->macro = devm_clk_get_optional(dev, "macro");
 	if (IS_ERR(tx->macro))
-		return PTR_ERR(tx->macro);
+		return dev_err_probe(dev, PTR_ERR(tx->macro), "unable to get macro clock\n");
 
 	tx->dcodec = devm_clk_get_optional(dev, "dcodec");
 	if (IS_ERR(tx->dcodec))
-		return PTR_ERR(tx->dcodec);
+		return dev_err_probe(dev, PTR_ERR(tx->dcodec), "unable to get dcodec clock\n");
 
 	tx->mclk = devm_clk_get(dev, "mclk");
 	if (IS_ERR(tx->mclk))
-		return PTR_ERR(tx->mclk);
+		return dev_err_probe(dev, PTR_ERR(tx->mclk), "unable to get mclk clock\n");
 
 	if (flags & LPASS_MACRO_FLAG_HAS_NPL_CLOCK) {
 		tx->npl = devm_clk_get(dev, "npl");
 		if (IS_ERR(tx->npl))
-			return PTR_ERR(tx->npl);
+			return dev_err_probe(dev, PTR_ERR(tx->npl), "unable to get npl clock\n");
 	}
 
 	tx->fsgen = devm_clk_get(dev, "fsgen");
 	if (IS_ERR(tx->fsgen))
-		return PTR_ERR(tx->fsgen);
+		return dev_err_probe(dev, PTR_ERR(tx->fsgen), "unable to get fsgen clock\n");
 
 	tx->pds = lpass_macro_pds_init(dev);
 	if (IS_ERR(tx->pds))

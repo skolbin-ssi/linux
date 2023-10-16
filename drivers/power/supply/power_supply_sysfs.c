@@ -286,7 +286,8 @@ static ssize_t power_supply_show_property(struct device *dev,
 
 		if (ret < 0) {
 			if (ret == -ENODATA)
-				dev_dbg(dev, "driver has no data for `%s' property\n",
+				dev_dbg_ratelimited(dev,
+					"driver has no data for `%s' property\n",
 					attr->attr.name);
 			else if (ret != -ENODEV && ret != -EAGAIN)
 				dev_err_ratelimited(dev,
@@ -480,6 +481,13 @@ int power_supply_uevent(const struct device *dev, struct kobj_uevent_env *env)
 	ret = add_uevent_var(env, "POWER_SUPPLY_NAME=%s", psy->desc->name);
 	if (ret)
 		return ret;
+
+	/*
+	 * Kernel generates KOBJ_REMOVE uevent in device removal path, after
+	 * resources have been freed. Exit early to avoid use-after-free.
+	 */
+	if (psy->removing)
+		return 0;
 
 	prop_buf = (char *)get_zeroed_page(GFP_KERNEL);
 	if (!prop_buf)

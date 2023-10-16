@@ -1183,14 +1183,13 @@ static const struct regmap_config wcd938x_regmap_config = {
 	.name = "wcd938x_csr",
 	.reg_bits = 32,
 	.val_bits = 8,
-	.cache_type = REGCACHE_RBTREE,
+	.cache_type = REGCACHE_MAPLE,
 	.reg_defaults = wcd938x_defaults,
 	.num_reg_defaults = ARRAY_SIZE(wcd938x_defaults),
 	.max_register = WCD938X_MAX_REGISTER,
 	.readable_reg = wcd938x_readable_register,
 	.writeable_reg = wcd938x_writeable_register,
 	.volatile_reg = wcd938x_volatile_register,
-	.can_multi_write = true,
 };
 
 static const struct sdw_slave_ops wcd9380_slave_ops = {
@@ -1271,7 +1270,7 @@ static int wcd9380_probe(struct sdw_slave *pdev,
 
 		/* Start in cache-only until device is enumerated */
 		regcache_cache_only(wcd->regmap, true);
-	};
+	}
 
 	pm_runtime_set_autosuspend_delay(dev, 3000);
 	pm_runtime_use_autosuspend(dev);

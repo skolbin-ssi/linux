@@ -408,7 +408,7 @@ static inline int __vlan_insert_tag(struct sk_buff *skb,
  * @mac_len: MAC header length including outer vlan headers
  *
  * Inserts the VLAN tag into @skb as part of the payload at offset mac_len
- * Returns a VLAN tagged skb. If a new skb is created, @skb is freed.
+ * Returns a VLAN tagged skb. This might change skb->head.
  *
  * Following the skb_unshare() example, in case of error, the calling function
  * doesn't have to worry about freeing the original skb.
@@ -437,7 +437,7 @@ static inline struct sk_buff *vlan_insert_inner_tag(struct sk_buff *skb,
  * @vlan_tci: VLAN TCI to insert
  *
  * Inserts the VLAN tag into @skb as part of the payload
- * Returns a VLAN tagged skb. If a new skb is created, @skb is freed.
+ * Returns a VLAN tagged skb. This might change skb->head.
  *
  * Following the skb_unshare() example, in case of error, the calling function
  * doesn't have to worry about freeing the original skb.
@@ -457,7 +457,7 @@ static inline struct sk_buff *vlan_insert_tag(struct sk_buff *skb,
  * @vlan_tci: VLAN TCI to insert
  *
  * Inserts the VLAN tag into @skb as part of the payload
- * Returns a VLAN tagged skb. If a new skb is created, @skb is freed.
+ * Returns a VLAN tagged skb. This might change skb->head.
  *
  * Following the skb_unshare() example, in case of error, the calling function
  * doesn't have to worry about freeing the original skb.
@@ -635,6 +635,23 @@ static inline __be16 __vlan_get_protocol(const struct sk_buff *skb, __be16 type,
 static inline __be16 vlan_get_protocol(const struct sk_buff *skb)
 {
 	return __vlan_get_protocol(skb, skb->protocol, NULL);
+}
+
+/* This version of __vlan_get_protocol() also pulls mac header in skb->head */
+static inline __be16 vlan_get_protocol_and_depth(struct sk_buff *skb,
+						 __be16 type, int *depth)
+{
+	int maclen;
+
+	type = __vlan_get_protocol(skb, type, &maclen);
+
+	if (type) {
+		if (!pskb_may_pull(skb, maclen))
+			type = 0;
+		else if (depth)
+			*depth = maclen;
+	}
+	return type;
 }
 
 /* A getter for the SKB protocol field which will handle VLAN tags consistently

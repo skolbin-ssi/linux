@@ -68,9 +68,15 @@ bool pdsc_is_fw_running(struct pdsc *pdsc)
 
 bool pdsc_is_fw_good(struct pdsc *pdsc)
 {
-	u8 gen = pdsc->fw_status & PDS_CORE_FW_STS_F_GENERATION;
+	bool fw_running = pdsc_is_fw_running(pdsc);
+	u8 gen;
 
-	return pdsc_is_fw_running(pdsc) && gen == pdsc->fw_generation;
+	/* Make sure to update the cached fw_status by calling
+	 * pdsc_is_fw_running() before getting the generation
+	 */
+	gen = pdsc->fw_status & PDS_CORE_FW_STS_F_GENERATION;
+
+	return fw_running && gen == pdsc->fw_generation;
 }
 
 static u8 pdsc_devcmd_status(struct pdsc *pdsc)
@@ -115,7 +121,7 @@ static const char *pdsc_devcmd_str(int opcode)
 	}
 }
 
-static int pdsc_devcmd_wait(struct pdsc *pdsc, int max_seconds)
+static int pdsc_devcmd_wait(struct pdsc *pdsc, u8 opcode, int max_seconds)
 {
 	struct device *dev = pdsc->dev;
 	unsigned long start_time;
@@ -125,9 +131,6 @@ static int pdsc_devcmd_wait(struct pdsc *pdsc, int max_seconds)
 	int done = 0;
 	int err = 0;
 	int status;
-	int opcode;
-
-	opcode = ioread8(&pdsc->cmd_regs->cmd.opcode);
 
 	start_time = jiffies;
 	max_wait = start_time + (max_seconds * HZ);
@@ -174,10 +177,10 @@ int pdsc_devcmd_locked(struct pdsc *pdsc, union pds_core_dev_cmd *cmd,
 
 	memcpy_toio(&pdsc->cmd_regs->cmd, cmd, sizeof(*cmd));
 	pdsc_devcmd_dbell(pdsc);
-	err = pdsc_devcmd_wait(pdsc, max_seconds);
+	err = pdsc_devcmd_wait(pdsc, cmd->opcode, max_seconds);
 	memcpy_fromio(comp, &pdsc->cmd_regs->comp, sizeof(*comp));
 
-	if (err == -ENXIO || err == -ETIMEDOUT)
+	if ((err == -ENXIO || err == -ETIMEDOUT) && pdsc->wq)
 		queue_work(pdsc->wq, &pdsc->health_work);
 
 	return err;
