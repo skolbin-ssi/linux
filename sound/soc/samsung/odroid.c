@@ -157,8 +157,7 @@ SND_SOC_DAILINK_DEFS(primary,
 
 SND_SOC_DAILINK_DEFS(mixer,
 	DAILINK_COMP_ARRAY(COMP_DUMMY()),
-	DAILINK_COMP_ARRAY(COMP_EMPTY()),
-	DAILINK_COMP_ARRAY(COMP_DUMMY()));
+	DAILINK_COMP_ARRAY(COMP_EMPTY()));
 
 SND_SOC_DAILINK_DEFS(secondary,
 	DAILINK_COMP_ARRAY(COMP_EMPTY()),
@@ -342,7 +341,7 @@ static struct platform_driver odroid_audio_driver = {
 		.pm		= &snd_soc_pm_ops,
 	},
 	.probe	= odroid_audio_probe,
-	.remove_new = odroid_audio_remove,
+	.remove = odroid_audio_remove,
 };
 module_platform_driver(odroid_audio_driver);
 

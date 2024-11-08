@@ -178,7 +178,6 @@ struct rp2_card;
 struct rp2_uart_port {
 	struct uart_port		port;
 	int				idx;
-	int				ignore_rx;
 	struct rp2_card			*card;
 	void __iomem			*asic_base;
 	void __iomem			*base;
@@ -578,8 +577,8 @@ static void rp2_reset_asic(struct rp2_card *card, unsigned int asic_id)
 	u32 clk_cfg;
 
 	writew(1, base + RP2_GLOBAL_CMD);
-	readw(base + RP2_GLOBAL_CMD);
 	msleep(100);
+	readw(base + RP2_GLOBAL_CMD);
 	writel(0, base + RP2_CLK_PRESCALER);
 
 	/* TDM clock configuration */

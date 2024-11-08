@@ -133,10 +133,10 @@ struct vnt_private {
 	volatile int                iTDUsed[TYPE_MAXTD];
 
 	struct vnt_tx_desc *apCurrTD[TYPE_MAXTD];
-	struct vnt_tx_desc *apTailTD[TYPE_MAXTD];
+	struct vnt_tx_desc *tail_td[TYPE_MAXTD];
 
-	struct vnt_tx_desc *apTD0Rings;
-	struct vnt_tx_desc *apTD1Rings;
+	struct vnt_tx_desc *ap_td0_rings;
+	struct vnt_tx_desc *ap_td1_rings;
 
 	struct vnt_rx_desc *aRD0Ring;
 	struct vnt_rx_desc *aRD1Ring;
@@ -189,10 +189,10 @@ struct vnt_private {
 
 	u8		byBBType; /* 0:11A, 1:11B, 2:11G */
 	u8		packet_type; /*
-				       * 0:11a,1:11b,2:11gb (only CCK
-				       * in BasicRate), 3:11ga (OFDM in
-				       * Basic Rate)
-				       */
+				      * 0:11a,1:11b,2:11gb (only CCK
+				      * in BasicRate), 3:11ga (OFDM in
+				      * Basic Rate)
+				      */
 	unsigned short wBasicRate;
 	unsigned char byACKRate;
 	unsigned char byTopOFDMBasicRate;
@@ -281,7 +281,7 @@ struct vnt_private {
 
 	unsigned char abyEEPROM[EEP_MAX_CONTEXT_SIZE]; /* unsigned long alignment */
 
-	unsigned short wBeaconInterval;
+	unsigned short beacon_interval;
 	u16 wake_up_count;
 
 	struct work_struct interrupt_work;

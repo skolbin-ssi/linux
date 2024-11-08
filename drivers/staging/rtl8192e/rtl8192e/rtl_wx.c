@@ -158,28 +158,6 @@ static int _rtl92e_wx_set_mode(struct net_device *dev,
 	return ret;
 }
 
-struct  iw_range_with_scan_capa {
-	/* Informative stuff (to choose between different interface) */
-	__u32	   throughput;     /* To give an idea... */
-	/* In theory this value should be the maximum benchmarked
-	 * TCP/IP throughput, because with most of these devices the
-	 * bit rate is meaningless (overhead an co) to estimate how
-	 * fast the connection will go and pick the fastest one.
-	 * I suggest people to play with Netperf or any benchmark...
-	 */
-
-	/* NWID (or domain id) */
-	__u32	   min_nwid;	/* Minimal NWID we are able to set */
-	__u32	   max_nwid;	/* Maximal NWID we are able to set */
-
-	/* Old Frequency (backward compat - moved lower ) */
-	__u16	   old_num_channels;
-	__u8	    old_num_frequency;
-
-	/* Scan capabilities */
-	__u8	    scan_capa;
-};
-
 static int _rtl92e_wx_get_range(struct net_device *dev,
 				struct iw_request_info *info,
 				union iwreq_data *wrqu, char *extra)
@@ -263,7 +241,7 @@ static int _rtl92e_wx_set_scan(struct net_device *dev,
 		    (ieee->link_state <= RTLLIB_ASSOCIATING_AUTHENTICATED))
 			return 0;
 		if ((priv->rtllib->link_state == MAC80211_LINKED) &&
-		    (priv->rtllib->CntAfterLink < 2))
+		    (priv->rtllib->cnt_after_link < 2))
 			return 0;
 	}
 
@@ -275,7 +253,7 @@ static int _rtl92e_wx_set_scan(struct net_device *dev,
 	rt_state = priv->rtllib->rf_power_state;
 	if (!priv->up)
 		return -ENETDOWN;
-	if (priv->rtllib->link_detect_info.bBusyTraffic)
+	if (priv->rtllib->link_detect_info.busy_traffic)
 		return -EAGAIN;
 
 	if (wrqu->data.flags & IW_SCAN_THIS_ESSID) {
@@ -291,7 +269,7 @@ static int _rtl92e_wx_set_scan(struct net_device *dev,
 
 	mutex_lock(&priv->wx_mutex);
 
-	priv->rtllib->FirstIe_InScan = true;
+	priv->rtllib->first_ie_in_scan = true;
 
 	if (priv->rtllib->link_state != MAC80211_LINKED) {
 		if (rt_state == rf_off) {
@@ -310,11 +288,11 @@ static int _rtl92e_wx_set_scan(struct net_device *dev,
 		if (priv->rtllib->rf_power_state != rf_off) {
 			priv->rtllib->actscanning = true;
 
-			ieee->ScanOperationBackupHandler(ieee->dev, SCAN_OPT_BACKUP);
+			ieee->scan_operation_backup_handler(ieee->dev, SCAN_OPT_BACKUP);
 
 			rtllib_start_scan_syncro(priv->rtllib);
 
-			ieee->ScanOperationBackupHandler(ieee->dev, SCAN_OPT_RESTORE);
+			ieee->scan_operation_backup_handler(ieee->dev, SCAN_OPT_RESTORE);
 		}
 		ret = 0;
 	} else {
@@ -548,7 +526,8 @@ static int _rtl92e_wx_set_enc(struct net_device *dev,
 	mutex_unlock(&priv->wx_mutex);
 
 	if (wrqu->encoding.flags & IW_ENCODE_DISABLED) {
-		ieee->pairwise_key_type = ieee->group_key_type = KEY_TYPE_NA;
+		ieee->pairwise_key_type = KEY_TYPE_NA;
+		ieee->group_key_type = KEY_TYPE_NA;
 		rtl92e_cam_reset(dev);
 		memset(priv->rtllib->swcamtable, 0,
 		       sizeof(struct sw_cam_table) * 32);
@@ -697,9 +676,9 @@ static int _rtl92e_wx_set_encode_ext(struct net_device *dev,
 		u8 idx = 0, alg = 0, group = 0;
 
 		if ((encoding->flags & IW_ENCODE_DISABLED) ||
-		     ext->alg == IW_ENCODE_ALG_NONE) {
-			ieee->pairwise_key_type = ieee->group_key_type
-						= KEY_TYPE_NA;
+		    ext->alg == IW_ENCODE_ALG_NONE) {
+			ieee->pairwise_key_type = KEY_TYPE_NA;
+			ieee->group_key_type = KEY_TYPE_NA;
 			rtl92e_cam_reset(dev);
 			memset(priv->rtllib->swcamtable, 0,
 			       sizeof(struct sw_cam_table) * 32);
@@ -732,7 +711,7 @@ static int _rtl92e_wx_set_encode_ext(struct net_device *dev,
 			rtl92e_set_swcam(dev, idx, idx, alg, broadcast_addr, key);
 		} else {
 			if ((ieee->pairwise_key_type == KEY_TYPE_CCMP) &&
-			     ieee->ht_info->current_ht_support)
+			    ieee->ht_info->current_ht_support)
 				rtl92e_writeb(dev, 0x173, 1);
 			rtl92e_set_key(dev, 4, idx, alg,
 				       (u8 *)ieee->ap_mac_addr, 0, key);

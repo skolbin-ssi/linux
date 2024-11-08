@@ -20,6 +20,7 @@ use Getopt::Long qw(:config no_auto_abbrev);
 use Cwd;
 use File::Find;
 use File::Spec::Functions;
+use open qw(:std :encoding(UTF-8));
 
 my $cur_path = fastgetcwd() . '/';
 my $lk_path = "./";
@@ -53,6 +54,7 @@ my $output_section_maxlen = 50;
 my $scm = 0;
 my $tree = 1;
 my $web = 0;
+my $bug = 0;
 my $subsystem = 0;
 my $status = 0;
 my $letters = "";
@@ -270,6 +272,7 @@ if (!GetOptions(
 		'scm!' => \$scm,
 		'tree!' => \$tree,
 		'web!' => \$web,
+		'bug!' => \$bug,
 		'letters=s' => \$letters,
 		'pattern-depth=i' => \$pattern_depth,
 		'k|keywords!' => \$keywords,
@@ -319,13 +322,14 @@ if ($sections || $letters ne "") {
     $status = 0;
     $subsystem = 0;
     $web = 0;
+    $bug = 0;
     $keywords = 0;
     $keywords_in_file = 0;
     $interactive = 0;
 } else {
-    my $selections = $email + $scm + $status + $subsystem + $web;
+    my $selections = $email + $scm + $status + $subsystem + $web + $bug;
     if ($selections == 0) {
-	die "$P:  Missing required option: email, scm, status, subsystem or web\n";
+	die "$P:  Missing required option: email, scm, status, subsystem, web or bug\n";
     }
 }
 
@@ -445,7 +449,7 @@ sub maintainers_in_file {
 	my $text = do { local($/) ; <$f> };
 	close($f);
 
-	my @poss_addr = $text =~ m$[A-Za-zÀ-ÿ\"\' \,\.\+-]*\s*[\,]*\s*[\(\<\{]{0,1}[A-Za-z0-9_\.\+-]+\@[A-Za-z0-9\.-]+\.[A-Za-z0-9]+[\)\>\}]{0,1}$g;
+	my @poss_addr = $text =~ m$[\p{L}\"\' \,\.\+-]*\s*[\,]*\s*[\(\<\{]{0,1}[A-Za-z0-9_\.\+-]+\@[A-Za-z0-9\.-]+\.[A-Za-z0-9]+[\)\>\}]{0,1}$g;
 	push(@file_emails, clean_file_emails(@poss_addr));
     }
 }
@@ -630,6 +634,7 @@ my %hash_list_to;
 my @list_to = ();
 my @scm = ();
 my @web = ();
+my @bug = ();
 my @subsystem = ();
 my @status = ();
 my %deduplicate_name_hash = ();
@@ -659,6 +664,11 @@ if ($subsystem) {
 if ($web) {
     @web = uniq(@web);
     output(@web);
+}
+
+if ($bug) {
+    @bug = uniq(@bug);
+    output(@bug);
 }
 
 exit($exit);
@@ -846,6 +856,7 @@ sub get_maintainers {
     @list_to = ();
     @scm = ();
     @web = ();
+    @bug = ();
     @subsystem = ();
     @status = ();
     %deduplicate_name_hash = ();
@@ -1068,6 +1079,7 @@ MAINTAINER field selection options:
   --status => print status if any
   --subsystem => print subsystem name if any
   --web => print website(s) if any
+  --bug => print bug reporting info if any
 
 Output type options:
   --separator [, ] => separator for multiple entries on 1 line
@@ -1152,6 +1164,17 @@ sub top_of_kernel_tree {
     return 0;
 }
 
+sub escape_name {
+    my ($name) = @_;
+
+    if ($name =~ /[^\w \-]/ai) {  	 ##has "must quote" chars
+	$name =~ s/(?<!\\)"/\\"/g;       ##escape quotes
+	$name = "\"$name\"";
+    }
+
+    return $name;
+}
+
 sub parse_email {
     my ($formatted_email) = @_;
 
@@ -1169,12 +1192,8 @@ sub parse_email {
 
     $name =~ s/^\s+|\s+$//g;
     $name =~ s/^\"|\"$//g;
+    $name = escape_name($name);
     $address =~ s/^\s+|\s+$//g;
-
-    if ($name =~ /[^\w \-]/i) {  	 ##has "must quote" chars
-	$name =~ s/(?<!\\)"/\\"/g;       ##escape quotes
-	$name = "\"$name\"";
-    }
 
     return ($name, $address);
 }
@@ -1186,12 +1205,8 @@ sub format_email {
 
     $name =~ s/^\s+|\s+$//g;
     $name =~ s/^\"|\"$//g;
+    $name = escape_name($name);
     $address =~ s/^\s+|\s+$//g;
-
-    if ($name =~ /[^\w \-]/i) {          ##has "must quote" chars
-	$name =~ s/(?<!\\)"/\\"/g;       ##escape quotes
-	$name = "\"$name\"";
-    }
 
     if ($usename) {
 	if ("$name" eq "") {
@@ -1378,6 +1393,8 @@ sub add_categories {
 		push(@scm, $pvalue . $suffix);
 	    } elsif ($ptype eq "W") {
 		push(@web, $pvalue . $suffix);
+	    } elsif ($ptype eq "B") {
+		push(@bug, $pvalue . $suffix);
 	    } elsif ($ptype eq "S") {
 		push(@status, $pvalue . $suffix);
 	    }
@@ -2458,17 +2475,23 @@ sub clean_file_emails {
     foreach my $email (@file_emails) {
 	$email =~ s/[\(\<\{]{0,1}([A-Za-z0-9_\.\+-]+\@[A-Za-z0-9\.-]+)[\)\>\}]{0,1}/\<$1\>/g;
 	my ($name, $address) = parse_email($email);
-	if ($name eq '"[,\.]"') {
-	    $name = "";
-	}
 
-	my @nw = split(/[^A-Za-zÀ-ÿ\'\,\.\+-]/, $name);
+	# Strip quotes for easier processing, format_email will add them back
+	$name =~ s/^"(.*)"$/$1/;
+
+	# Split into name-like parts and remove stray punctuation particles
+	my @nw = split(/[^\p{L}\'\,\.\+-]/, $name);
+	@nw = grep(!/^[\'\,\.\+-]$/, @nw);
+
+	# Make a best effort to extract the name, and only the name, by taking
+	# only the last two names, or in the case of obvious initials, the last
+	# three names.
 	if (@nw > 2) {
 	    my $first = $nw[@nw - 3];
 	    my $middle = $nw[@nw - 2];
 	    my $last = $nw[@nw - 1];
 
-	    if (((length($first) == 1 && $first =~ m/[A-Za-z]/) ||
+	    if (((length($first) == 1 && $first =~ m/\p{L}/) ||
 		 (length($first) == 2 && substr($first, -1) eq ".")) ||
 		(length($middle) == 1 ||
 		 (length($middle) == 2 && substr($middle, -1) eq "."))) {
@@ -2476,18 +2499,16 @@ sub clean_file_emails {
 	    } else {
 		$name = "$middle $last";
 	    }
+	} else {
+	    $name = "@nw";
 	}
 
 	if (substr($name, -1) =~ /[,\.]/) {
 	    $name = substr($name, 0, length($name) - 1);
-	} elsif (substr($name, -2) =~ /[,\.]"/) {
-	    $name = substr($name, 0, length($name) - 2) . '"';
 	}
 
 	if (substr($name, 0, 1) =~ /[,\.]/) {
 	    $name = substr($name, 1, length($name) - 1);
-	} elsif (substr($name, 0, 2) =~ /"[,\.]/) {
-	    $name = '"' . substr($name, 2, length($name) - 2);
 	}
 
 	my $fmt_email = format_email($name, $address, $email_usename);
